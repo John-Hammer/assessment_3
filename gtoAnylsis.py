@@ -1,262 +1,288 @@
 import pandas as pd
 import numpy as np
-from collections import defaultdict
+from enum import Enum
+from typing import Dict, List, Tuple
 
-class GTODeviationAnalyzer:
-    def __init__(self):
-        # RFI (Raise First In) percentages from the charts
-        self.rfi_frequencies = {
-            'LJ': 17.0,    # 226/1326 hands
-            'HJ': 21.4,    # 284/1326 hands
-            'CO': 27.8,    # 368/1326 hands
-            'BTN': 43.3,   # 574/1326 hands
-            'SB': {
-                'raise': 24.5,  # 322/1326 hands
-                'limp': 36.0    # 504/1326 hands
-            }
-        }
+class Position(Enum):
+    UTG = "utg"
+    MP = "mp"
+    CO = "co"
+    BTN = "btn"
+    SB = "sb"
+    BB = "bb"
+
+class Action(Enum):
+    FOLD = "fold"
+    LIMP = "call"
+    RAISE = "raise"
+
+# Define card ranks and suits
+RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
+SUITS = ['s', 'o']  # s for suited, o for offsuit
+
+def create_hand_matrix():
+    """Create a matrix of all possible starting hands."""
+    hands = []
+    for i, r1 in enumerate(RANKS):
+        for j, r2 in enumerate(RANKS):
+            if i > j:  # Suited combinations
+                hands.append(f"{r1}{r2}s")
+            elif i < j:  # Offsuit combinations
+                hands.append(f"{r1}{r2}o")
+            elif i == j:  # Pocket pairs
+                hands.append(f"{r1}{r1}")
+    return sorted(hands, key=lambda x: (RANKS.index(x[0]), RANKS.index(x[1])))
+
+def create_gto_charts():
+    """
+    Create GTO charts for each position.
+    Values represent the percentage of time to raise (0.0 to 1.0)
+    For example: 0.85 means raise 85% of the time, fold 15%
+    """
+    # UTG chart based on the image (purple = raise, coral = fold, mixed shown by ratio)
+    utg_chart_no_raise = {
+        'AA': 1.0, 'AKs': 1.0, 'AQs': 1.0, 'AJs': 1.0, 'ATs': 1.0, 'A9s': 1.0, 'A8s': 1.0, 'A7s': 1.0, 'A6s': 1.0, 'A5s': 1.0, 'A4s': 1.0, 'A3s': 1.0, 'A2s': 1.0,
+        'AKo': 1.0, 'KK': 1.0, 'KQs': 1.0, 'KJs': 1.0, 'KTs': 1.0, 'K9s': 1.0, 'K8s': 1.0, 'K7s': 0.5296, 'K6s': 0.6504, 'K5s': 0.9997, 'K4s': 0.0, 'K3s': 0.0, 'K2s': 0.0,
+        'AQo': 1.0, 'KQo': 1.0, 'QQ': 1.0, 'QJs': 1.0, 'QTs': 1.0, 'Q9s': 0.0042, 'Q8s': 0.0, 'Q7s': 0.0, 'Q6s': 0.0, 'Q5s': 0.0, 'Q4s': 0.0, 'Q3s': 0.0, 'Q2s': 0.0,
+        'AJo': 1.0, 'KJo': 1.0, 'QJo': 0.2899, 'JJ': 1.0, 'JTs': 1.0, 'J9s': 0.0, 'J8s': 0.0, 'J7s': 0.0, 'J6s': 0.0, 'J5s': 0.0, 'J4s': 0.0, 'J3s': 0.0, 'J2s': 0.0,
+        'ATo': 1.0, 'KTo': 0.3136, 'QTo': 0.0, 'JTo': 0.0, 'TT': 1.0, 'T9s': 0.9341, 'T8s': 0.0, 'T7s': 0.0, 'T6s': 0.0, 'T5s': 0.0, 'T4s': 0.0, 'T3s': 0.0, 'T2s': 0.0,
+        'A9o': 0.0, 'K9o': 0.0, 'Q9o': 0.0, 'J9o': 0.0, 'T9o': 0.0, '99': 1.0, '98s': 0.0, '97s': 0.0, '96s': 0.0, '95s': 0.0, '94s': 0.0, '93s': 0.0, '92s': 0.0,
+        'A8o': 0.0, 'K8o': 0.0, 'Q8o': 0.0, 'J8o': 0.0, 'T8o': 0.0, '98o': 0.0, '88': 1.0, '87s': 0.0, '86s': 0.0, '85s': 0.0, '84s': 0.0, '83s': 0.0, '82s': 0.0,
+        'A7o': 0.0, 'K7o': 0.0, 'Q7o': 0.0, 'J7o': 0.0, 'T7o': 0.0, '97o': 0.0, '87o': 0.0, '77': 1.0, '76s': 0.2259, '75s': 0.0, '74s': 0.0, '73s': 0.0, '72s': 0.0,
+        'A6o': 0.0, 'K6o': 0.0, 'Q6o': 0.0, 'J6o': 0.0, 'T6o': 0.0, '96o': 0.0, '86o': 0.0, '76o': 0.0, '66': 0.455, '65s': 0.6808, '64s': 0.0, '63s': 0.0, '62s': 0.0,
+        'A5o': 0.0, 'K5o': 0.0, 'Q5o': 0.0, 'J5o': 0.0, 'T5o': 0.0, '95o': 0.0, '85o': 0.0, '75o': 0.0, '65o': 0.0, '55': 0.4999, '54s': 0.083, '53s': 0.0, '52s': 0.0,
+        'A4o': 0.0, 'K4o': 0.0, 'Q4o': 0.0, 'J4o': 0.0, 'T4o': 0.0, '94o': 0.0, '84o': 0.0, '74o': 0.0, '64o': 0.0, '54o': 0.0, '44': 0.0, '43s': 0.0, '42s': 0.0,
+        'A3o': 0.0, 'K3o': 0.0, 'Q3o': 0.0, 'J3o': 0.0, 'T3o': 0.0, '93o': 0.0, '83o': 0.0, '73o': 0.0, '63o': 0.0, '53o': 0.0, '43o': 0.0, '33': 0.0, '32s': 0.0,
+        'A2o': 0.0, 'K2o': 0.0, 'Q2o': 0.0, 'J2o': 0.0, 'T2o': 0.0, '92o': 0.0, '82o': 0.0, '72o': 0.0, '62o': 0.0, '52o': 0.0, '42o': 0.0, '32o': 0.0, '22': 0.0
+    }
+
+    hj_chart_no_raise = {
+        'AA': 1.0, 'AKs': 1.0, 'AQs': 1.0, 'AJs': 1.0, 'ATs': 1.0, 'A9s': 1.0, 'A8s': 1.0, 'A7s': 1.0, 'A6s': 1.0, 'A5s': 1.0, 'A4s': 1.0, 'A3s': 1.0, 'A2s': 1.0,
+        'AKo': 1.0, 'KK': 1.0, 'KQs': 1.0, 'KJs': 1.0, 'KTs': 1.0, 'K9s': 1.0, 'K8s': 1.0, 'K7s': 1.0, 'K6s': 1.0, 'K5s': 1.0, 'K4s': 0.0001, 'K3s': 0.0, 'K2s': 0.0,
+        'AQo': 1.0, 'KQo': 1.0, 'QQ': 1.0, 'QJs': 1.0, 'QTs': 1.0, 'Q9s': 1.0, 'Q8s': 0.0001, 'Q7s': 0.0, 'Q6s': 0.0, 'Q5s': 0.0, 'Q4s': 0.0, 'Q3s': 0.0, 'Q2s': 0.0,
+        'AJo': 1.0, 'KJo': 1.0, 'QJo': 1.0, 'JJ': 1.0, 'JTs': 1.0, 'J9s': 0.9992, 'J8s': 0.0, 'J7s': 0.0, 'J6s': 0.0, 'J5s': 0.0, 'J4s': 0.0, 'J3s': 0.0, 'J2s': 0.0,
+        'ATo': 1.0, 'KTo': 1.0, 'QTo': 0.447, 'JTo': 0.0, 'TT': 1.0, 'T9s': 1.0, 'T8s': 0.7146, 'T7s': 0.0, 'T6s': 0.0, 'T5s': 0.0, 'T4s': 0.0, 'T3s': 0.0, 'T2s': 0.0,
+        'A9o': 0.7221, 'K9o': 0.0, 'Q9o': 0.0, 'J9o': 0.0, 'T9o': 0.0, '99': 1.0, '98s': 0.0, '97s': 0.0, '96s': 0.0, '95s': 0.0, '94s': 0.0, '93s': 0.0, '92s': 0.0,
+        'A8o': 0.0021, 'K8o': 0.0, 'Q8o': 0.0, 'J8o': 0.0, 'T8o': 0.0, '98o': 0.0, '88': 1.0, '87s': 0.0, '86s': 0.0, '85s': 0.0, '84s': 0.0, '83s': 0.0, '82s': 0.0,
+        'A7o': 0.0, 'K7o': 0.0, 'Q7o': 0.0, 'J7o': 0.0, 'T7o': 0.0, '97o': 0.0, '87o': 0.0, '77': 1.0, '76s': 0.1505, '75s': 0.0, '74s': 0.0, '73s': 0.0, '72s': 0.0,
+        'A6o': 0.0, 'K6o': 0.0, 'Q6o': 0.0, 'J6o': 0.0, 'T6o': 0.0, '96o': 0.0, '86o': 0.0, '76o': 0.0, '66': 1.0, '65s': 0.9294, '64s': 0.0, '63s': 0.0, '62s': 0.0,
+        'A5o': 0.151, 'K5o': 0.0, 'Q5o': 0.0, 'J5o': 0.0, 'T5o': 0.0, '95o': 0.0, '85o': 0.0, '75o': 0.0, '65o': 0.0, '55': 1.0, '54s': 0.139, '53s': 0.0, '52s': 0.0,
+        'A4o': 0.0, 'K4o': 0.0, 'Q4o': 0.0, 'J4o': 0.0, 'T4o': 0.0, '94o': 0.0, '84o': 0.0, '74o': 0.0, '64o': 0.0, '54o': 0.0, '44': 0.0, '43s': 0.0, '42s': 0.0,
+        'A3o': 0.0, 'K3o': 0.0, 'Q3o': 0.0, 'J3o': 0.0, 'T3o': 0.0, '93o': 0.0, '83o': 0.0, '73o': 0.0, '63o': 0.0, '53o': 0.0, '43o': 0.0, '33': 0.0, '32s': 0.0,
+        'A2o': 0.0, 'K2o': 0.0, 'Q2o': 0.0, 'J2o': 0.0, 'T2o': 0.0, '92o': 0.0, '82o': 0.0, '72o': 0.0, '62o': 0.0, '52o': 0.0, '42o': 0.0, '32o': 0.0, '22': 0.0
+    }
+
+    co_chart_no_raise = {
+        'AA': 1.0, 'AKs': 1.0, 'AQs': 1.0, 'AJs': 1.0, 'ATs': 1.0, 'A9s': 1.0, 'A8s': 1.0, 'A7s': 1.0, 'A6s': 1.0, 'A5s': 1.0, 'A4s': 1.0, 'A3s': 1.0, 'A2s': 1.0,
+        'AKo': 1.0, 'KK': 1.0, 'KQs': 1.0, 'KJs': 1.0, 'KTs': 1.0, 'K9s': 1.0, 'K8s': 1.0, 'K7s': 1.0, 'K6s': 1.0, 'K5s': 1.0, 'K4s': 1.0, 'K3s': 0.9999, 'K2s': 0.0,
+        'AQo': 1.0, 'KQo': 1.0, 'QQ': 1.0, 'QJs': 1.0, 'QTs': 1.0, 'Q9s': 1.0, 'Q8s': 1.0, 'Q7s': 0.9972, 'Q6s': 0.9958, 'Q5s': 0.074, 'Q4s': 0.0, 'Q3s': 0.0, 'Q2s': 0.0,
+        'AJo': 1.0, 'KJo': 1.0, 'QJo': 1.0, 'JJ': 1.0, 'JTs': 1.0, 'J9s': 1.0, 'J8s': 1.0, 'J7s': 0.0, 'J6s': 0.0, 'J5s': 0.0, 'J4s': 0.0, 'J3s': 0.0, 'J2s': 0.0,
+        'ATo': 1.0, 'KTo': 1.0, 'QTo': 1.0, 'JTo': 1.0, 'TT': 1.0, 'T9s': 1.0, 'T8s': 1.0, 'T7s': 0.9985, 'T6s': 0.0, 'T5s': 0.0, 'T4s': 0.0, 'T3s': 0.0, 'T2s': 0.0,
+        'A9o': 1.0, 'K9o': 0.0001, 'Q9o': 0.0, 'J9o': 0.0, 'T9o': 0.0, '99': 1.0, '98s': 1.0, '97s': 0.6057, '96s': 0.0, '95s': 0.0, '94s': 0.0, '93s': 0.0, '92s': 0.0,
+        'A8o': 0.9999, 'K8o': 0.0, 'Q8o': 0.0, 'J8o': 0.0, 'T8o': 0.0, '98o': 0.0, '88': 1.0, '87s': 0.3947, '86s': 0.0, '85s': 0.0, '84s': 0.0, '83s': 0.0, '82s': 0.0,
+        'A7o': 0.0, 'K7o': 0.0, 'Q7o': 0.0, 'J7o': 0.0, 'T7o': 0.0, '97o': 0.0, '87o': 0.0, '77': 1.0, '76s': 0.6347, '75s': 0.0, '74s': 0.0, '73s': 0.0, '72s': 0.0,
+        'A6o': 0.0, 'K6o': 0.0, 'Q6o': 0.0, 'J6o': 0.0, 'T6o': 0.0, '96o': 0.0, '86o': 0.0, '76o': 0.0, '66': 1.0, '65s': 0.9993, '64s': 0.0, '63s': 0.0, '62s': 0.0,
+        'A5o': 0.9892, 'K5o': 0.0, 'Q5o': 0.0, 'J5o': 0.0, 'T5o': 0.0, '95o': 0.0, '85o': 0.0, '75o': 0.0, '65o': 0.0, '55': 1.0, '54s': 0.4368, '53s': 0.0, '52s': 0.0,
+        'A4o': 0.0, 'K4o': 0.0, 'Q4o': 0.0, 'J4o': 0.0, 'T4o': 0.0, '94o': 0.0, '84o': 0.0, '74o': 0.0, '64o': 0.0, '54o': 0.0, '44': 1.0, '43s': 0.0, '42s': 0.0,
+        'A3o': 0.0, 'K3o': 0.0, 'Q3o': 0.0, 'J3o': 0.0, 'T3o': 0.0, '93o': 0.0, '83o': 0.0, '73o': 0.0, '63o': 0.0, '53o': 0.0, '43o': 0.0, '33': 0.0465, '32s': 0.0,
+        'A2o': 0.0, 'K2o': 0.0, 'Q2o': 0.0, 'J2o': 0.0, 'T2o': 0.0, '92o': 0.0, '82o': 0.0, '72o': 0.0, '62o': 0.0, '52o': 0.0, '42o': 0.0, '32o': 0.0, '22': 0.0
+    }
+
+    btn_chart_no_raise = {
+        'AA': 1.0, 'AKs': 1.0, 'AQs': 1.0, 'AJs': 1.0, 'ATs': 1.0, 'A9s': 1.0, 'A8s': 1.0, 'A7s': 1.0, 'A6s': 1.0, 'A5s': 1.0, 'A4s': 1.0, 'A3s': 1.0, 'A2s': 1.0,
+        'AKo': 1.0, 'KK': 1.0, 'KQs': 1.0, 'KJs': 1.0, 'KTs': 1.0, 'K9s': 1.0, 'K8s': 1.0, 'K7s': 1.0, 'K6s': 1.0, 'K5s': 1.0, 'K4s': 1.0, 'K3s': 1.0, 'K2s': 1.0,
+        'AQo': 1.0, 'KQo': 1.0, 'QQ': 1.0, 'QJs': 1.0, 'QTs': 1.0, 'Q9s': 1.0, 'Q8s': 1.0, 'Q7s': 1.0, 'Q6s': 1.0, 'Q5s': 1.0, 'Q4s': 1.0, 'Q3s': 1.0, 'Q2s': 1.0,
+        'AJo': 1.0, 'KJo': 1.0, 'QJo': 1.0, 'JJ': 1.0, 'JTs': 1.0, 'J9s': 1.0, 'J8s': 1.0, 'J7s': 1.0, 'J6s': 1.0, 'J5s': 1.0, 'J4s': 0.9977, 'J3s': 0.0, 'J2s': 0.0,
+        'ATo': 1.0, 'KTo': 1.0, 'QTo': 1.0, 'JTo': 1.0, 'TT': 1.0, 'T9s': 1.0, 'T8s': 1.0, 'T7s': 1.0, 'T6s': 1.0, 'T5s': 0.2758, 'T4s': 0.0, 'T3s': 0.0, 'T2s': 0.0,
+        'A9o': 1.0, 'K9o': 1.0, 'Q9o': 1.0, 'J9o': 1.0, 'T9o': 1.0, '99': 1.0, '98s': 1.0, '97s': 1.0, '96s': 1.0, '95s': 0.0, '94s': 0.0, '93s': 0.0, '92s': 0.0,
+        'A8o': 1.0, 'K8o': 0.9768, 'Q8o': 0.3131, 'J8o': 0.0, 'T8o': 0.6307, '98o': 0.0, '88': 1.0, '87s': 1.0, '86s': 0.9998, '85s': 0.0, '84s': 0.0, '83s': 0.0, '82s': 0.0,
+        'A7o': 1.0, 'K7o': 0.3599, 'Q7o': 0.0, 'J7o': 0.0, 'T7o': 0.0, '97o': 0.0, '87o': 0.0, '77': 1.0, '76s': 1.0, '75s': 1.0, '74s': 0.0, '73s': 0.0, '72s': 0.0,
+        'A6o': 1.0, 'K6o': 0.0, 'Q6o': 0.0, 'J6o': 0.0, 'T6o': 0.0, '96o': 0.0, '86o': 0.0, '76o': 0.0, '66': 1.0, '65s': 1.0, '64s': 0.0, '63s': 0.0, '62s': 0.0,
+        'A5o': 1.0, 'K5o': 0.0, 'Q5o': 0.0, 'J5o': 0.0, 'T5o': 0.0, '95o': 0.0, '85o': 0.0, '75o': 0.0, '65o': 0.0, '55': 1.0, '54s': 0.9994, '53s': 0.0, '52s': 0.0,
+        'A4o': 1.0, 'K4o': 0.0, 'Q4o': 0.0, 'J4o': 0.0, 'T4o': 0.0, '94o': 0.0, '84o': 0.0, '74o': 0.0, '64o': 0.0, '54o': 0.0, '44': 1.0, '43s': 0.0, '42s': 0.0,
+        'A3o': 1.0, 'K3o': 0.0, 'Q3o': 0.0, 'J3o': 0.0, 'T3o': 0.0, '93o': 0.0, '83o': 0.0, '73o': 0.0, '63o': 0.0, '53o': 0.0, '43o': 0.0, '33': 1.0, '32s': 0.0,
+        'A2o': 0.0, 'K2o': 0.0, 'Q2o': 0.0, 'J2o': 0.0, 'T2o': 0.0, '92o': 0.0, '82o': 0.0, '72o': 0.0, '62o': 0.0, '52o': 0.0, '42o': 0.0, '32o': 0.0, '22': 0.9997
+    }
+
+    sb_chart_no_raise = {
+        'AA': 1.0, 'AKs': 1.0, 'AQs': 1.0, 'AJs': 1.0, 'ATs': 1.0, 'A9s': 1.0, 'A8s': 1.0, 'A7s': 1.0, 'A6s': 1.0, 'A5s': 1.0, 'A4s': 1.0, 'A3s': 1.0, 'A2s': 1.0,
+        'AKo': 1.0, 'KK': 1.0, 'KQs': 1.0, 'KJs': 1.0, 'KTs': 1.0, 'K9s': 1.0, 'K8s': 1.0, 'K7s': 1.0, 'K6s': 1.0, 'K5s': 1.0, 'K4s': 1.0, 'K3s': 1.0, 'K2s': 1.0,
+        'AQo': 1.0, 'KQo': 1.0, 'QQ': 1.0, 'QJs': 1.0, 'QTs': 1.0, 'Q9s': 1.0, 'Q8s': 1.0, 'Q7s': 1.0, 'Q6s': 1.0, 'Q5s': 1.0, 'Q4s': 1.0, 'Q3s': 1.0, 'Q2s': 1.0,
+        'AJo': 1.0, 'KJo': 1.0, 'QJo': 1.0, 'JJ': 1.0, 'JTs': 1.0, 'J9s': 1.0, 'J8s': 1.0, 'J7s': 1.0, 'J6s': 1.0, 'J5s': 1.0, 'J4s': 0.3614, 'J3s': 0.0, 'J2s': 0.0,
+        'ATo': 1.0, 'KTo': 1.0, 'QTo': 1.0, 'JTo': 1.0, 'TT': 1.0, 'T9s': 1.0, 'T8s': 1.0, 'T7s': 1.0, 'T6s': 1.0, 'T5s': 0.0007, 'T4s': 0.0, 'T3s': 0.0, 'T2s': 0.0,
+        'A9o': 1.0, 'K9o': 1.0, 'Q9o': 1.0, 'J9o': 1.0, 'T9o': 1.0, '99': 1.0, '98s': 1.0, '97s': 1.0, '96s': 1.0, '95s': 0.0002, '94s': 0.0, '93s': 0.0, '92s': 0.0,
+        'A8o': 1.0, 'K8o': 0.4472, 'Q8o': 0.0, 'J8o': 0.0, 'T8o': 0.3829, '98o': 0.6425, '88': 1.0, '87s': 1.0, '86s': 1.0, '85s': 1.0, '84s': 0.0, '83s': 0.0, '82s': 0.0,
+        'A7o': 1.0, 'K7o': 0.0, 'Q7o': 0.0, 'J7o': 0.0, 'T7o': 0.0, '97o': 0.0, '87o': 0.0, '77': 1.0, '76s': 1.0, '75s': 1.0, '74s': 0.0002, '73s': 0.0, '72s': 0.0,
+        'A6o': 1.0, 'K6o': 0.0, 'Q6o': 0.0, 'J6o': 0.0, 'T6o': 0.0, '96o': 0.0, '86o': 0.0, '76o': 0.0, '66': 1.0, '65s': 1.0, '64s': 1.0, '63s': 0.0, '62s': 0.0,
+        'A5o': 1.0, 'K5o': 0.0, 'Q5o': 0.0, 'J5o': 0.0, 'T5o': 0.0, '95o': 0.0, '85o': 0.0, '75o': 0.0, '65o': 0.0, '55': 1.0, '54s': 1.0, '53s': 0.7582, '52s': 0.0,
+        'A4o': 1.0, 'K4o': 0.0, 'Q4o': 0.0, 'J4o': 0.0, 'T4o': 0.0, '94o': 0.0, '84o': 0.0, '74o': 0.0, '64o': 0.0, '54o': 0.0, '44': 1.0, '43s': 0.0, '42s': 0.0,
+        'A3o': 0.9999, 'K3o': 0.0, 'Q3o': 0.0, 'J3o': 0.0, 'T3o': 0.0, '93o': 0.0, '83o': 0.0, '73o': 0.0, '63o': 0.0, '53o': 0.0, '43o': 0.0, '33': 1.0, '32s': 0.0,
+        'A2o': 0.0, 'K2o': 0.0, 'Q2o': 0.0, 'J2o': 0.0, 'T2o': 0.0, '92o': 0.0, '82o': 0.0, '72o': 0.0, '62o': 0.0, '52o': 0.0, '42o': 0.0, '32o': 0.0, '22': 1.0
+    }
         
-        # Position mapping
-        self.position_mapping = {
-            'utg': 'LJ',
-            'mp': 'HJ',
-            'co': 'CO',
-            'btn': 'BTN',
-            'sb': 'SB',
-            'bb': 'BB'
-        }
+    # For all other hands not explicitly listed, default to 0.0 (fold)
+    all_hands = create_hand_matrix()
+    for hand in all_hands:
+        if hand not in utg_chart:
+            utg_chart[hand] = 0.0
+    
+    # For now, we'll use more aggressive charts for later positions
+    # In practice, you'd want to create specific charts for each position
+    mp_chart = {hand: min(1.0, value * 1.2) for hand, value in utg_chart.items()}
+    co_chart = {hand: min(1.0, value * 1.4) for hand, value in utg_chart.items()}
+    btn_chart = {hand: min(1.0, value * 1.6) for hand, value in utg_chart.items()}
+    sb_chart = {hand: min(1.0, value * 1.3) for hand, value in utg_chart.items()}
+    bb_chart = utg_chart  # BB plays differently due to being last to act
+    
+    return {
+        Position.UTG: utg_chart,
+        Position.MP: mp_chart,
+        Position.CO: co_chart,
+        Position.BTN: btn_chart,
+        Position.SB: sb_chart,
+        Position.BB: bb_chart,
+    }
 
-    def _get_position(self, hand_data):
-        """Determine the position for analysis based on preflop action"""
-        # Check each position's action in order
-        positions = ['utg', 'mp', 'co', 'btn', 'sb', 'bb']
-        for pos in positions:
-            action_col = f'preflop_action_{pos}'
-            if pd.notna(hand_data[action_col]) and hand_data[action_col] != '':
-                return self.position_mapping[pos]
-        return None
-
-    def _get_action(self, hand_data):
-        """Extract the actual action taken from the hand data"""
-        positions = ['utg', 'mp', 'co', 'btn', 'sb', 'bb']
-        for pos in positions:
-            action_col = f'preflop_action_{pos}'
-            if pd.notna(hand_data[action_col]) and hand_data[action_col] != '':
-                action = hand_data[action_col].lower()
-                if 'raise' in action:
-                    return 'raise'
-                elif 'call' in action:
-                    return 'call'
-                elif 'fold' in action:
-                    return 'fold'
-                elif 'check' in action:
-                    return 'check'
-        return None
-
-    def _get_facing_action(self, hand_data):
-        """Determine what action the player was facing"""
-        positions = ['utg', 'mp', 'co', 'btn', 'sb', 'bb']
-        current_pos = None
-        
-        # Find the position being analyzed
-        for pos in positions:
-            action_col = f'preflop_action_{pos}'
-            if pd.notna(hand_data[action_col]) and hand_data[action_col] != '':
-                current_pos = positions.index(pos)
-                break
-                
-        if current_pos is None or current_pos == 0:
-            return 'none'
-            
-        # Check if any earlier position has raised
-        for pos in positions[:current_pos]:
-            action_col = f'preflop_action_{pos}'
-            if pd.notna(hand_data[action_col]) and 'raise' in hand_data[action_col].lower():
-                return 'raise'
-            elif pd.notna(hand_data[action_col]) and 'call' in hand_data[action_col].lower():
-                return 'call'
-        
-        return 'none'
-
-    def _analyze_rfi_spot(self, position, action, hand_type):
-        """Analyze a Raise First In situation"""
-        gto_frequency = self.rfi_frequencies.get(position, 0)
-        
-        # Simplified analysis - could be expanded with actual hand ranges
-        should_raise = (hand_type in self._get_rfi_range(position))
-        
-        return {
-            'position': position,
-            'situation': 'RFI',
-            'hand': hand_type,
-            'actual_play': action,
-            'gto_play': 'raise' if should_raise else 'fold',
-            'is_gto': (action == 'raise') == should_raise
-        }
-
-    def _analyze_vs_rfi_spot(self, position, facing_action, action, hand_type):
-        """Analyze a facing RFI situation"""
-        key = f"{position}_vs_{facing_action}"
-        frequencies = self.vs_rfi_frequencies.get(key, {})
-        
-        # Simplified analysis - could be expanded with actual hand ranges
-        should_3bet = (hand_type in self._get_3bet_range(position, facing_action))
-        should_call = (hand_type in self._get_call_range(position, facing_action))
-        
-        gto_play = 'fold'
-        if should_3bet:
-            gto_play = '3bet'
-        elif should_call:
-            gto_play = 'call'
-            
-        return {
-            'position': position,
-            'situation': f'vs_{facing_action}',
-            'hand': hand_type,
-            'actual_play': action,
-            'gto_play': gto_play,
-            'is_gto': action == gto_play
-        }
-
-    def _get_rfi_range(self, position):
-        """Get the RFI range for a position - placeholder for demonstration"""
-        # This should be expanded with actual ranges from the charts
-        return {'AKs', 'AQs', 'AKo', 'KQs'}  # Example range
-
-    def _get_3bet_range(self, position, facing_action):
-        """Get the 3bet range for a position - placeholder for demonstration"""
-        # This should be expanded with actual ranges from the charts
-        return {'AKs', 'AAs', 'KKs'}  # Example range
-
-    def _get_call_range(self, position, facing_action):
-        """Get the calling range for a position - placeholder for demonstration"""
-        # This should be expanded with actual ranges from the charts
-        return {'JTs', 'QJs', 'KQs'}  # Example range
-
-    def analyze_hand(self, hand_data):
-        """Analyze a single hand for GTO deviations"""
-        position = self._get_position(hand_data)
-        action = self._get_action(hand_data)
-        facing_action = self._get_facing_action(hand_data)
-        
-        if not all([position, action]):
-            return None
-            
-        hand_type = self._convert_hand_format(hand_data['hole_cards'])
-        
-        if facing_action == 'none':
-            return self._analyze_rfi_spot(position, action, hand_type)
+def parse_hand_history(file_path: str) -> pd.DataFrame:
+    """Parse the hand history file into a DataFrame."""
+    # Read the hand history file
+    df = pd.read_csv(file_path, delimiter=' ')
+    
+    # Convert hole cards to standardized format
+    def standardize_hand(cards: str) -> str:
+        if not isinstance(cards, str):
+            return ''
+        card1, card2 = cards.split()
+        rank1, rank2 = card1[0], card2[0]
+        suited = card1[1] == card2[1]
+        if rank1 == rank2:
+            return f"{rank1}{rank1}"
+        elif suited:
+            return f"{max(rank1, rank2)}{min(rank1, rank2)}s"
         else:
-            return self._analyze_vs_rfi_spot(position, facing_action, action, hand_type)
+            return f"{max(rank1, rank2)}{min(rank1, rank2)}o"
+    
+    df['standardized_hand'] = df['hole_cards'].apply(standardize_hand)
+    return df
 
-    def _convert_hand_format(self, hole_cards):
-        """Convert hole cards to standard notation (e.g., AKs, AKo)"""
-        if pd.isna(hole_cards):
-            return None
-            
-        cards = hole_cards.split()
-        if len(cards) != 2:
-            return None
-            
-        card1, card2 = cards[0], cards[1]
-        rank1, suit1 = card1[0], card1[1]
-        rank2, suit2 = card2[0], card2[1]
-        
-        suited = 's' if suit1 == suit2 else 'o'
-        return f"{rank1}{rank2}{suited}"
+def calculate_gto_error(actual_freq: float, gto_freq: float) -> str:
+    """Calculate and categorize GTO deviation."""
+    deviation = actual_freq - gto_freq
+    if abs(deviation) < 0.05:
+        return "Optimal (±5%)"
+    elif abs(deviation) < 0.10:
+        return f"{'Over' if deviation > 0 else 'Under'}-aggressive (±10%)"
+    else:
+        return f"Significant {'over' if deviation > 0 else 'under'}-play ({deviation:+.1%})"
 
-    def process_hand_histories(self, df):
-        """Process all hands and identify deviations"""
-        deviations = []
-        summaries = defaultdict(lambda: {'total': 0, 'deviations': 0, 'hands': []})
+def analyze_player_actions(df: pd.DataFrame, player_name: str, gto_charts: Dict) -> Dict:
+    """Analyze how closely a player's actions match GTO charts."""
+    results = {}
+    
+    for position in Position:
+        # Filter hands where player was in this position
+        position_hands = df[df[position.value] == player_name]
         
-        for _, hand in df.iterrows():
-            analysis = self.analyze_hand(hand)
-            if analysis:  # Skip hands that couldn't be analyzed
-                situation = f"{analysis['position']}_{analysis['situation']}"
-                summaries[situation]['total'] += 1
+        if len(position_hands) == 0:
+            continue
+            
+        hand_stats = {}
+        for hand in create_hand_matrix():
+            hand_instances = position_hands[position_hands['standardized_hand'] == hand]
+            
+            if len(hand_instances) == 0:
+                continue
                 
-                if not analysis['is_gto']:
-                    deviations.append(analysis)
-                    summaries[situation]['deviations'] += 1
-                    summaries[situation]['hands'].append({
-                        'hand': analysis['hand'],
-                        'actual_play': analysis['actual_play'],
-                        'gto_play': analysis['gto_play']
-                    })
+            # Calculate action frequencies
+            total_hands = len(hand_instances)
+            fold_freq = len(hand_instances[hand_instances[f'preflop_action_{position.value}'].str.contains('fold', na=False)]) / total_hands
+            raise_freq = len(hand_instances[hand_instances[f'preflop_action_{position.value}'].str.contains('raise', na=False)]) / total_hands
+            limp_freq = len(hand_instances[hand_instances[f'preflop_action_{position.value}'].str.contains('call', na=False)]) / total_hands
+            
+            # Compare to GTO chart
+            gto_raise_freq = gto_charts[position].get(hand, 0.0)
+            gto_deviation = abs(raise_freq - gto_raise_freq)
+            
+            hand_stats[hand] = {
+                'total_hands': total_hands,
+                'fold_frequency': fold_freq,
+                'raise_frequency': raise_freq,
+                'limp_frequency': limp_freq,
+                'gto_raise_frequency': gto_raise_freq,
+                'gto_deviation': gto_deviation,
+                'gto_error': calculate_gto_error(raise_freq, gto_raise_freq)
+            }
+            
+        results[position.value] = hand_stats
+    
+    return results
 
-        return self._generate_report(deviations, summaries)
-
-    def _generate_report(self, deviations, summaries):
-        """Generate comprehensive analysis report"""
-        report = {
-            'overall_summary': {
-                'total_hands': sum(s['total'] for s in summaries.values()),
-                'total_deviations': len(deviations),
-                'deviation_percentage': round(len(deviations) / max(sum(s['total'] for s in summaries.values()), 1) * 100, 2)
-            },
-            'position_summary': {},
-            'biggest_leaks': [],
-            'detailed_deviations': deviations
-        }
-
-        # Analyze position-specific patterns
-        for situation, data in summaries.items():
-            if data['total'] > 0:
-                deviation_rate = (data['deviations'] / data['total']) * 100
-                report['position_summary'][situation] = {
-                    'total_hands': data['total'],
-                    'deviations': data['deviations'],
-                    'deviation_rate': round(deviation_rate, 2)
-                }
-
-        # Identify biggest leaks
-        situation_deviations = defaultdict(list)
-        for dev in deviations:
-            key = f"{dev['position']}_{dev['situation']}"
-            situation_deviations[key].append(dev)
-
-        for situation, devs in situation_deviations.items():
-            if len(devs) >= 3:  # Only include patterns with at least 3 occurrences
-                report['biggest_leaks'].append({
-                    'situation': situation,
-                    'frequency': len(devs),
-                    'example_hands': devs[:3]
-                })
-
-        return report
-
-    def print_report(self, report):
-        """Print formatted analysis report"""
-        print("\n=== GTO Deviation Analysis Report ===\n")
+def generate_report(analysis_results: Dict) -> str:
+    """Generate a readable report from the analysis results."""
+    report = "GTO Analysis Report\n==================\n\n"
+    
+    for position, hands in analysis_results.items():
+        report += f"\nPosition: {position.upper()}\n{'-' * (len(position) + 10)}\n"
         
-        print("Overall Summary:")
-        print(f"Total Hands Analyzed: {report['overall_summary']['total_hands']}")
-        print(f"Total Deviations: {report['overall_summary']['total_deviations']}")
-        print(f"Overall Deviation Rate: {report['overall_summary']['deviation_percentage']}%\n")
+        if not hands:
+            report += "No hands played in this position\n"
+            continue
         
-        print("Position-Specific Analysis:")
-        for situation, data in report['position_summary'].items():
-            print(f"\n{situation}:")
-            print(f"  Hands: {data['total_hands']}")
-            print(f"  Deviations: {data['deviations']}")
-            print(f"  Deviation Rate: {data['deviation_rate']}%")
+        # Sort hands by GTO deviation for easier reading
+        sorted_hands = sorted(hands.items(), key=lambda x: x[1]['gto_deviation'], reverse=True)
         
-        print("\nBiggest Leaks:")
-        for leak in report['biggest_leaks']:
-            print(f"\n{leak['situation']}:")
-            print(f"Frequency: {leak['frequency']} times")
-            print("Example hands:")
-            for hand in leak['example_hands']:
-                print(f"  {hand['hand']}: Played {hand['actual_play']} instead of {hand['gto_play']}")
+        # Overall statistics
+        total_hands = sum(stats['total_hands'] for _, stats in sorted_hands)
+        weighted_deviation = sum(stats['gto_deviation'] * stats['total_hands'] 
+                               for _, stats in sorted_hands) / total_hands if total_hands > 0 else 0
+        
+        report += f"Total hands: {total_hands}\n"
+        report += f"Overall GTO deviation: {weighted_deviation:.1%}\n\n"
+        
+        # Individual hand analysis
+        report += "Most significant deviations:\n"
+        for hand, stats in sorted_hands[:10]:  # Show top 10 deviations
+            if stats['gto_deviation'] > 0.05:  # Only show meaningful deviations
+                report += f"\nHand: {hand}\n"
+                report += f"  Played {stats['total_hands']} times\n"
+                report += f"  Actual raise frequency: {stats['raise_frequency']:.1%}\n"
+                report += f"  GTO raise frequency: {stats['gto_raise_frequency']:.1%}\n"
+                report += f"  Assessment: {stats['gto_error']}\n"
+    
+    return report
 
-# Example usage
-if __name__ == "__main__":
-    file_path = "./archive/wpn_blitz_10nl.csv"
+def main():
+    """Main function to run the analysis."""
     try:
-        hands_df = pd.read_csv(file_path)
-        analyzer = GTODeviationAnalyzer()
-        report = analyzer.process_hand_histories(hands_df)
-        analyzer.print_report(report)
+        # Configuration
+        file_path = "./archive/wpn_blitz_10nl.csv"  # Update this to your file path
+        player_name = "Vadims" # Update this to the player you want to analyze
+        
+        # Create GTO charts
+        print("Creating GTO charts...")
+        gto_charts = create_gto_charts()
+        
+        # Parse hand history
+        print(f"Parsing hand history from {file_path}...")
+        df = parse_hand_history(file_path)
+        
+        # Analyze player actions
+        print(f"Analyzing actions for player: {player_name}...")
+        analysis_results = analyze_player_actions(df, player_name, gto_charts)
+        
+        # Generate and print report
+        print("\nGenerating report...\n")
+        report = generate_report(analysis_results)
+        print(report)
+        
+        # Optionally save report to file
+        with open("gto_analysis_report.txt", "w") as f:
+            f.write(report)
+        print("\nReport saved to gto_analysis_report.txt")
+        
     except Exception as e:
-        print(f"Error processing hand histories: {str(e)}")
+        print(f"Error occurred: {str(e)}")
+        raise
+
+if __name__ == "__main__":
+    main()
