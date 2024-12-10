@@ -100,6 +100,9 @@ def prepare_emissions_data(emissions_df):
 
 # [Rest of the functions remain the same as in your current script]
 def create_temperature_plot(yearly_temp):
+    # Filter data from 1850 onwards
+    yearly_temp = yearly_temp[yearly_temp['Year'] >= 1850].copy()
+    
     plt.figure(figsize=(15, 8))
     
     # Define a color palette for continents
@@ -144,7 +147,7 @@ def create_temperature_plot(yearly_temp):
     plt.axhline(y=baseline_temp, color='gray', linestyle=':', 
                 label='Pre-industrial baseline (1850-1900)', alpha=0.5)
     
-    plt.title('Average Temperature by Continent Over Time')
+    plt.title('Average Temperature by Continent Over Time (1850 onwards)')
     plt.xlabel('Year')
     plt.ylabel('Average Temperature (°C)')
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -153,12 +156,15 @@ def create_temperature_plot(yearly_temp):
     return plt
 
 def create_emissions_plot(yearly_emissions):
+    # Filter data from 1850 onwards
+    yearly_emissions = yearly_emissions[yearly_emissions['Year'] >= 1850].copy()
+    
     plt.figure(figsize=(15, 8))
     
     plt.plot(yearly_emissions['Year'], yearly_emissions['Annual CO₂ emissions'], 
             color='red', linewidth=2)
     
-    plt.title('Global CO₂ Emissions Over Time')
+    plt.title('Global CO₂ Emissions Over Time (1850 onwards)')
     plt.xlabel('Year')
     plt.ylabel('Annual CO₂ Emissions')
     plt.grid(True, alpha=0.3)
@@ -166,6 +172,10 @@ def create_emissions_plot(yearly_emissions):
     return plt
 
 def create_combined_plot(yearly_temp, yearly_emissions):
+    # Filter data from 1850 onwards
+    yearly_temp = yearly_temp[yearly_temp['Year'] >= 1850].copy()
+    yearly_emissions = yearly_emissions[yearly_emissions['Year'] >= 1850].copy()
+    
     fig, ax1 = plt.subplots(figsize=(15, 8))
     
     # Define colors for continents
@@ -219,7 +229,7 @@ def create_combined_plot(yearly_temp, yearly_emissions):
     ax2.set_ylabel('Annual CO₂ Emissions', color='red')
     ax2.tick_params(axis='y', labelcolor='red')
     
-    plt.title('Temperature by Continent and CO₂ Emissions Over Time')
+    plt.title('Temperature by Continent and CO₂ Emissions Over Time (1850 onwards)')
     
     # Combine legends
     lines1, labels1 = ax1.get_legend_handles_labels()
@@ -229,9 +239,28 @@ def create_combined_plot(yearly_temp, yearly_emissions):
     return plt
 
 def create_future_projections_plot(yearly_temp, yearly_emissions):
+    # Filter data from 1850 onwards
+    yearly_temp = yearly_temp[yearly_temp['Year'] >= 1850].copy()
+    yearly_emissions = yearly_emissions[yearly_emissions['Year'] >= 1850].copy()
+    
+    # Prepare regression models
+    global_temp = yearly_temp[yearly_temp['Continent'] == 'Global Average']
+    
+    # Prepare data for regression
+    X_temp = global_temp[['Year']].values
+    y_temp = global_temp['AverageTemperature'].values
+    X_emissions = yearly_emissions[['Year']].values
+    y_emissions = yearly_emissions['Annual CO₂ emissions'].values
+    
+    # Create and fit models
+    temp_model = LinearRegression()
+    temp_model.fit(X_temp, y_temp)
+    emissions_model = LinearRegression()
+    emissions_model.fit(X_emissions, y_emissions)
+    
     fig, ax1 = plt.subplots(figsize=(15, 8))
     
-    # Colors and baseline definitions remain the same
+    # Colors and baseline definitions
     colors = {
         'Europe': '#1f77b4',
         'Asia': '#ff7f0e',
@@ -243,43 +272,43 @@ def create_future_projections_plot(yearly_temp, yearly_emissions):
     }
     
     # Get baseline temperature (1850-1900 average)
-    global_data = yearly_temp[yearly_temp['Continent'] == 'Global Average']
-    baseline_temp = global_data[
-        (global_data['Year'] >= 1850) & 
-        (global_data['Year'] <= 1900)
+    baseline_temp = global_temp[
+        (global_temp['Year'] >= 1850) & 
+        (global_temp['Year'] <= 1900)
     ]['AverageTemperature'].mean()
     
-    # Calculate 2-degree and 1.5-degree rise lines
+    # Calculate threshold lines
     two_degree_line = baseline_temp + 2
     one_five_degree_line = baseline_temp + 1.5
     
-    # Get last years from data and set projection periods
-    last_temp_year = global_data['Year'].max()  # 2013
-    last_emissions_year = yearly_emissions['Year'].max()  # 2022
+    # Get last years and set projection period
+    last_temp_year = global_temp['Year'].max()
+    last_emissions_year = yearly_emissions['Year'].max()
     projection_end = 2100
     
-    # Create separate projection years for temp and emissions
-    temp_projection_years = list(range(last_temp_year, projection_end + 1))
-    emissions_projection_years = list(range(last_emissions_year, projection_end + 1))
+    # Create projection years arrays
+    temp_projection_years = np.array(range(last_temp_year, projection_end + 1)).reshape(-1, 1)
+    emissions_projection_years = np.array(range(last_emissions_year, projection_end + 1)).reshape(-1, 1)
     
-    # Get the most recent values
-    recent_global_temp = global_data[global_data['Year'] == last_temp_year]['AverageTemperature'].iloc[0]
+    # Get regression-based projections
+    temp_regression_pred = temp_model.predict(temp_projection_years)
+    emissions_regression_pred = emissions_model.predict(emissions_projection_years)
+    
+    # Calculate current rate projections (original method)
+    recent_global_temp = global_temp[global_temp['Year'] == last_temp_year]['AverageTemperature'].iloc[0]
     recent_emissions = yearly_emissions[yearly_emissions['Year'] == last_emissions_year]['Annual CO₂ emissions'].iloc[0]
     
-    # Calculate historical rates of change
-    last_30_years = global_data[global_data['Year'] >= last_temp_year - 30]
+    last_30_years = global_temp[global_temp['Year'] >= last_temp_year - 30]
     temp_change_rate = (last_30_years['AverageTemperature'].iloc[-1] - 
                        last_30_years['AverageTemperature'].iloc[0]) / 30
     
-    # Adjust rates for projections
     temp_increase_rate = temp_change_rate * 0.85
     emission_increase_rate = recent_emissions * 0.005
     
-    # Create projection data
-    projected_temps = [recent_global_temp + temp_increase_rate * (year - last_temp_year) 
-                      for year in temp_projection_years]
-    projected_emissions = [recent_emissions + emission_increase_rate * (year - last_emissions_year) 
-                         for year in emissions_projection_years]
+    current_rate_temps = [recent_global_temp + temp_increase_rate * (year - last_temp_year) 
+                         for year in temp_projection_years.flatten()]
+    current_rate_emissions = [recent_emissions + emission_increase_rate * (year - last_emissions_year) 
+                            for year in emissions_projection_years.flatten()]
     
     # Plot historical temperature data
     for continent in yearly_temp['Continent'].unique():
@@ -291,11 +320,13 @@ def create_future_projections_plot(yearly_temp, yearly_emissions):
             ax1.plot(continent_data['Year'], continent_data['AverageTemperature'],
                     label=f'Historical {continent}', color=colors[continent], alpha=0.5)
     
-    # Plot projected global temperature
-    ax1.plot(temp_projection_years, projected_temps, '--', color='black', 
-             label=f'Projected Global Average (from {last_temp_year})', linewidth=2)
+    # Plot both types of temperature projections
+    # ax1.plot(temp_projection_years, current_rate_temps, '--', color='black', 
+    #          label=f'Rate-based Projection (from {last_temp_year})', linewidth=2)
+    ax1.plot(temp_projection_years, temp_regression_pred, ':', color='purple', 
+             label=f'Regression-based Temp Projection (from {last_temp_year})', linewidth=2)
     
-    # Add temperature threshold lines
+    # Add threshold lines
     ax1.axhline(y=two_degree_line, color='red', linestyle='--', 
                 label='+2°C threshold', linewidth=2)
     ax1.axhline(y=one_five_degree_line, color='orange', linestyle='--', 
@@ -312,14 +343,16 @@ def create_future_projections_plot(yearly_temp, yearly_emissions):
     # Historical emissions
     ax2.plot(yearly_emissions['Year'], yearly_emissions['Annual CO₂ emissions'],
             color='red', linewidth=2, label='Historical CO₂ Emissions')
-    # Projected emissions
-    ax2.plot(emissions_projection_years, projected_emissions, '--', color='red', 
-             label=f'Projected CO₂ Emissions (from {last_emissions_year})', linewidth=2)
+    # Both types of emissions projections
+    # ax2.plot(emissions_projection_years, current_rate_emissions, '--', color='red', 
+    #          label=f'Rate-based Emissions Projection (from {last_emissions_year})', alpha=0.7)
+    ax2.plot(emissions_projection_years, emissions_regression_pred, ':', color='red', 
+             label=f'Regression-based Emissions Projection (from {last_emissions_year})', alpha=0.7)
     
     ax2.set_ylabel('Annual CO₂ Emissions', color='red')
     ax2.tick_params(axis='y', labelcolor='red')
     
-    plt.title(f'Historical Data and Future Projections\nTemperature (from {last_temp_year}) and CO₂ Emissions (from {last_emissions_year})')
+    plt.title(f'Historical Data and Future Projections (1850-2100)\nComparing Rate-based and Regression-based Projections')
     
     # Add vertical lines for last data years
     plt.axvline(x=last_temp_year, color='blue', linestyle='--', alpha=0.5, 
