@@ -495,23 +495,31 @@ def main():
     projections_plot.savefig('./charts/future_projections.png', bbox_inches='tight', dpi=300)
     projections_plot.close()
     
-    # Add regression analysis
+    #  Add regression analysis
     print("Performing regression analysis...")
     regression_plot, regression_results = perform_regression_analysis(yearly_temp, yearly_emissions)
     regression_plot.savefig('./charts/regression_analysis.png', bbox_inches='tight', dpi=300)
     regression_plot.close()
     
+    # Get coefficients and intercepts
+    temp_model = regression_results['temperature']['model']
+    emissions_model = regression_results['emissions']['model']
+    
     # Print regression results
     print("\nRegression Analysis Results:")
-    print("\nTemperature Model:")
-    print(f"Equation: {regression_results['temperature']['equation']}")
+    print("\nTemperature Linear Regression:")
+    print(f"Temperature = {temp_model.coef_[0]:.4f} ⋅ Year + {temp_model.intercept_:.2f}")
     print(f"R² Score: {regression_results['temperature']['r2']:.4f}")
     print(f"RMSE: {regression_results['temperature']['rmse']:.4f}°C")
     
-    print("\nEmissions Model:")
-    print(f"Equation: {regression_results['emissions']['equation']}")
+    print("\nEmissions Linear Regression:")
+    print(f"Emissions = {emissions_model.coef_[0]:.4f} ⋅ Year + {emissions_model.intercept_:.2f}")
     print(f"R² Score: {regression_results['emissions']['r2']:.4f}")
-    print(f"RMSE: {regression_results['emissions']['rmse']:.4f}")
+    print(f"RMSE: {regression_results['emissions']['rmse']:.4f} metric tons")
+    
+    print("\nFormulas in simplified notation:")
+    print(f"Temperature = {temp_model.coef_[0]:.4f} ⋅ Year + {temp_model.intercept_:.2f}")
+    print(f"Emissions = {emissions_model.coef_[0]:.4f} ⋅ Year + {emissions_model.intercept_:.2f}")
     
     print("\nAnalysis complete! Check the generated PNG files in charts directory.")
 
