@@ -2,6 +2,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_squared_error
+import numpy as np
 
 # Dictionary mapping countries to continents
 CONTINENT_MAPPING = {
@@ -331,6 +334,93 @@ def create_future_projections_plot(yearly_temp, yearly_emissions):
     
     return plt
 
+def perform_regression_analysis(yearly_temp, yearly_emissions):
+    
+    # Prepare temperature data for global average
+    global_temp = yearly_temp[yearly_temp['Continent'] == 'Global Average']
+    
+    # Merge temperature and emissions data
+    merged_data = pd.merge(global_temp[['Year', 'AverageTemperature']], 
+                          yearly_emissions[['Year', 'Annual CO₂ emissions']],
+                          on='Year', how='inner')
+    
+    # Prepare data for regression
+    X_temp = merged_data[['Year']].values
+    y_temp = merged_data['AverageTemperature'].values
+    X_emissions = merged_data[['Year']].values
+    y_emissions = merged_data['Annual CO₂ emissions'].values
+    
+    # Create and fit temperature model
+    temp_model = LinearRegression()
+    temp_model.fit(X_temp, y_temp)
+    
+    # Create and fit emissions model
+    emissions_model = LinearRegression()
+    emissions_model.fit(X_emissions, y_emissions)
+    
+    # Make predictions
+    temp_pred = temp_model.predict(X_temp)
+    emissions_pred = emissions_model.predict(X_emissions)
+    
+    # Calculate metrics
+    temp_r2 = r2_score(y_temp, temp_pred)
+    temp_rmse = np.sqrt(mean_squared_error(y_temp, temp_pred))
+    emissions_r2 = r2_score(y_emissions, emissions_pred)
+    emissions_rmse = np.sqrt(mean_squared_error(y_emissions, emissions_pred))
+    
+    # Create visualization
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 16))
+    
+    # Temperature regression plot
+    ax1.scatter(X_temp, y_temp, color='blue', alpha=0.5, label='Actual Temperature')
+    ax1.plot(X_temp, temp_pred, color='red', label='Regression Line')
+    ax1.set_title('Temperature Linear Regression Analysis')
+    ax1.set_xlabel('Year')
+    ax1.set_ylabel('Average Temperature (°C)')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    
+    # Add regression equation and metrics
+    temp_eq = f'Temp = {temp_model.coef_[0]:.4f}*Year + {temp_model.intercept_:.2f}'
+    ax1.text(0.05, 0.95, f'Equation: {temp_eq}\nR² = {temp_r2:.4f}\nRMSE = {temp_rmse:.4f}°C', 
+             transform=ax1.transAxes, verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Emissions regression plot
+    ax2.scatter(X_emissions, y_emissions, color='green', alpha=0.5, label='Actual Emissions')
+    ax2.plot(X_emissions, emissions_pred, color='red', label='Regression Line')
+    ax2.set_title('CO₂ Emissions Linear Regression Analysis')
+    ax2.set_xlabel('Year')
+    ax2.set_ylabel('Annual CO₂ Emissions')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+    
+    # Add regression equation and metrics
+    emissions_eq = f'Emissions = {emissions_model.coef_[0]:.4f}*Year + {emissions_model.intercept_:.2f}'
+    ax2.text(0.05, 0.95, f'Equation: {emissions_eq}\nR² = {emissions_r2:.4f}\nRMSE = {emissions_rmse:.4f}', 
+             transform=ax2.transAxes, verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
+    
+    # Return the models and metrics
+    results = {
+        'temperature': {
+            'model': temp_model,
+            'r2': temp_r2,
+            'rmse': temp_rmse,
+            'equation': temp_eq
+        },
+        'emissions': {
+            'model': emissions_model,
+            'r2': emissions_r2,
+            'rmse': emissions_rmse,
+            'equation': emissions_eq
+        }
+    }
+    
+    return plt, results
+
 def main():
     # Define your CSV file paths
     temperature_csv = "tempArchive/GlobalLandTemperaturesByCountry.csv"
@@ -366,13 +456,31 @@ def main():
     combined_plot.savefig('./charts/temperature_and_emissions_by_continent.png', bbox_inches='tight', dpi=300)
     combined_plot.close()
 
-    # Add new plot for future projections
+    # Future projections plot
     print("Creating future projections plot...")
     projections_plot = create_future_projections_plot(yearly_temp, yearly_emissions)
     projections_plot.savefig('./charts/future_projections.png', bbox_inches='tight', dpi=300)
     projections_plot.close()
     
-    print("Analysis complete! Check the generated PNG files in charts directory.")
+    # Add regression analysis
+    print("Performing regression analysis...")
+    regression_plot, regression_results = perform_regression_analysis(yearly_temp, yearly_emissions)
+    regression_plot.savefig('./charts/regression_analysis.png', bbox_inches='tight', dpi=300)
+    regression_plot.close()
+    
+    # Print regression results
+    print("\nRegression Analysis Results:")
+    print("\nTemperature Model:")
+    print(f"Equation: {regression_results['temperature']['equation']}")
+    print(f"R² Score: {regression_results['temperature']['r2']:.4f}")
+    print(f"RMSE: {regression_results['temperature']['rmse']:.4f}°C")
+    
+    print("\nEmissions Model:")
+    print(f"Equation: {regression_results['emissions']['equation']}")
+    print(f"R² Score: {regression_results['emissions']['r2']:.4f}")
+    print(f"RMSE: {regression_results['emissions']['rmse']:.4f}")
+    
+    print("\nAnalysis complete! Check the generated PNG files in charts directory.")
 
 if __name__ == "__main__":
     main()
